@@ -98,3 +98,54 @@ Entonces sí hay un costo por usar `--export`, pero tampoco es lo que domina el 
 La herramienta que mostró el resultado más claro fue `perf`. En `perf report` se veía que `GridIndex::nearest()` tenía un 98.11 % de las muestras de ciclos, mientras que las demás funciones estaban muy por debajo.
 
 Después, al correr gperftools y Callgrind, salió prácticamente la misma tendencia. Con `perf` alcanzaba para encontrar el problema, y las otras dos herramientas sirvieron para comprobarlo.
+
+## Ejercicio C – Análisis de ensamblador (perf annotate)
+
+### 1. ¿Qué instrucciones concentran más muestras?
+
+| Instrucción | % samples |
+|---|---:|
+| `comisd %xmm0,%xmm1` | 22.80% |
+| `jbe 239` | 13.47% |
+| `addq $0x4,%rdx` | 7.23% |
+| `movsd (%r14),%xmm1` | 3.89% |
+| `addsd %xmm1,%xmm0` | 3.54% |
+| `subsd 0x8(%rax),%xmm1` | 3.48% |
+| `mulsd %xmm1,%xmm1` | 3.47% |
+| `subsd (%rax),%xmm0` | 3.42% |
+| `mulsd %xmm0,%xmm0` | 3.36% |
+
+La instrucción que más samples concentra es `comisd` con 22.80%, seguida del salto `jbe` con 13.47%. El resto corresponde a las operaciones de resta, multiplicación y suma que calculan la distancia al cuadrado.
+
+### 2. ¿Esas instrucciones corresponden al hotspot reportado por las herramientas del Ejercicio B?
+
+Sí. Todas pertenecen a `GridIndex::nearest()`, la misma función que aparecía como hotspot en `perf report`, gperftools y Callgrind.
+
+### 3. ¿Qué cambio de código intentaría primero?
+
+Cambiaría la estructura de vecinos. `comisd` y `jbe` juntas representan más de un tercio de las muestras, y ambas están ligadas a la comparación y el control del bucle de búsqueda, no al cálculo de distancia en sí. Una estructura distinta reduciría directamente esas comparaciones.
+
+---
+
+## Ejercicio D – Instrumentación manual
+
+### 1. ¿La región con mayor tiempo coincide con el hotspot de perf, Google Performance Tools y Valgrind?
+
+| Región | % del tiempo total |
+|---|---:|
+| `profile_metrics` | 61.50% |
+| `nearest_neighbors` | 30.01% |
+
+Sí. Entre las dos suman 91.5% del tiempo, y ambas regiones llaman internamente a `GridIndex::nearest()`, coincidiendo con lo visto en el Ejercicio B.
+
+### 2. ¿Cuánto overhead introduce la instrumentación?
+
+No se puede determinar con estos datos, ya que no se corrió una versión del programa sin `std::chrono` para comparar contra el tiempo total.
+
+### 3. ¿Qué partes del programa son más fáciles de entender con instrumentación manual que con muestreo?
+
+Cuántas veces se ejecuta cada región y cuánto pesa en el total. Por ejemplo, `profile_metrics` corrió 230 veces y `nearest_neighbors` 225 veces, y `export_reconstruction` representa 8.30% del tiempo con una sola ejecución por corrida.
+
+### 4. ¿Qué información no puede obtener con instrumentación manual?
+
+El detalle a nivel de instrucción. La instrumentación solo mide la región completa que se definió, pero no qué instrucción puntual dentro de ella consume el tiempo.
