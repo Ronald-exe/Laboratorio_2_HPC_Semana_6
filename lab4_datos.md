@@ -134,10 +134,117 @@ Cumulativos: `collimate_icp` 98.2%, `nearest_neighbor_distances` 65.2%, `compare
 
 ## Ejercicio C (segunda mitad — perf annotate)
 
+
+Evento: `cpu/cycles/P`, 4000 Hz — 119K muestras, event count ≈ 103,009,985,620.
+
+### `perf annotate` — `GridIndex::nearest()`
+
+| instrucción | % samples |
+|---|---|
+| `comisd %xmm0,%xmm1` | 22.80% |
+| `jbe 239` | 13.47% |
+| `addq $0x4,%rdx` | 7.23% |
+| `movsd (%r14),%xmm1` | 3.89% |
+| `addsd %xmm1,%xmm0` | 3.54% |
+| `subsd 0x8(%rax),%xmm1` | 3.48% |
+| `mulsd %xmm1,%xmm1` | 3.47% |
+| `subsd (%rax),%xmm0` | 3.42% |
+| `mulsd %xmm0,%xmm0` | 3.36% |
+| `movslq (%rdx),%rax` | 2.66% |
+| `shlq $0x4,%rax` | 2.61% |
+| `addq %rdi,%rax` | 2.61% |
+| `cmpl -0x34(%rbp),%eax` | 1.73% |
+| `cmpl -0x38(%rbp),%ecx` | 2.04% |
+| `jne 140` | 1.74% |
+
 ---
 
 ## Ejercicio D
 
+### Instrumentación con `std::chrono` — regiones medidas
+
+```cpp
+auto t0 = std::chrono::steady_clock::now();
+/* región medida */
+auto t1 = std::chrono::steady_clock::now();
+double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+std::cout << "region_ms=" << ms << "\n";
+```
+
+Regiones instrumentadas (8): `generate_target_profile`, `source_deformation`, `build_grid_index`, `profile_metrics` (inicial + por iteración), `nearest_neighbors` (por iteración), `estimate_transform` (por iteración), `export_reconstruction`.
+
+### Corrida individual (`--export`)
+
+141 líneas (1 encabezado + 140 filas): 4 regiones de una sola ejecución + 45 iteraciones × 3 regiones (nearest_neighbors, estimate_transform, profile_metrics) + export_reconstruction.
+
+### Promedio de 5 repeticiones
+
+| región | total_ms | avg_ms | n |
+|---|---|---|---|
+| `profile_metrics` | 89693.59 | 389.9721 | 230 |
+| `nearest_neighbors` | 43757.05 | 194.4758 | 225 |
+| `export_reconstruction` | 12104.10 | 2420.8200 | 5 |
+| `source_deformation` | 125.03 | 25.0055 | 5 |
+| `estimate_transform` | 92.75 | 0.4122 | 225 |
+| `generate_target_profile` | 46.17 | 9.2348 | 5 |
+| `build_grid_index` | 15.38 | 3.0769 | 5 |
+
+Total acumulado (5 corridas): 145,834.07 ms
+
+### % del tiempo total por región
+
+| región | % |
+|---|---|
+| `profile_metrics` | 61.50% |
+| `nearest_neighbors` | 30.01% |
+| `export_reconstruction` | 8.30% |
+| `source_deformation` | 0.09% |
+| `estimate_transform` | 0.06% |
+| `generate_target_profile` | 0.03% |
+| `build_grid_index` | 0.01% |
+
 ---
 
 ## Ejercicio E
+
+
+### Cambio realizado
+
+Parámetro `sample_fraction` agregado a `compare_profiles()` (default 1.0). Con valor <1.0, muestrea uniformemente (1 de cada N puntos) `target` y `source` antes de las búsquedas de vecino más cercano. Flag `--sample-fraction <valor>` agregado a `main()`.
+
+### Hipótesis
+
+`compare_profiles` construye 2 `GridIndex` adicionales y ejecuta 2 búsquedas completas de vecino más cercano por llamada (46 veces total), trabajo duplicado respecto al loop principal. Reducir la muestra debería reducir el tiempo proporcionalmente sin afectar el resultado final.
+
+### Evidencia: instrumentación manual (Ejercicio D)
+
+| región | avg_ms sin muestreo | avg_ms con `--sample-fraction 0.1` | reducción |
+|---|---|---|---|
+| `profile_metrics` | ~468 | ~62 | 87% |
+| `nearest_neighbors` | ~195 | ~195 | 0% (no tocado) |
+
+### Evidencia: `perf stat`
+
+| métrica | sin muestreo | con `--sample-fraction 0.1` | reducción |
+|---|---|---|---|
+| task-clock (msec) | 31,420.24 | 15,260.02 | 51.4% |
+| elapsed (s) | 31.44 | 15.28 | 51.4% |
+| user (s) | 31.16 | 15.24 | 51.1% |
+| sys (s) | 0.258 | 0.026 | 90.0% |
+| cpu-cycles | 119,922,287,145 | 49,702,712,620 | 58.5% |
+| instructions | 206,609,544,410 | 84,798,289,056 | 59.0% |
+| branch-misses | 494,710,767 | 195,018,672 | 60.6% |
+| page-faults | 97,815 | 5,435 | 94.4% |
+
+### Resultado del algoritmo
+
+| | sin muestreo | con `--sample-fraction 0.1` |
+|---|---|---|
+| profile_score final | 0.01847086 | 0.01841463 |
+| iteraciones | 45 | 45 |
+| theta recuperado | -18.00595° | -18.00595° |
+| tx, ty recuperados | (-1720.41095, 1781.98006) | (-1720.41095, 1781.98006) |
+
+Diferencia relativa en profile_score: 0.30%.
+
+
