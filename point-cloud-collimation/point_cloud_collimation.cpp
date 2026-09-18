@@ -430,17 +430,47 @@ static double rmse_from_distances(const std::vector<double> &distances) {
   return std::sqrt(sum2 / static_cast<double>(distances.size()));
 }
 
+//static ProfileMetrics compare_profiles(const std::vector<Point> &target,
+//                                       const std::vector<Point> &source,
+//                                       double coverage_threshold,
+//                                       double missing_distance) {
+//  GridIndex target_index(target, 90.0);
+//  GridIndex source_index(source, 90.0);
+
+//  std::vector<double> source_distances =
+//      nearest_neighbor_distances(target_index, source, missing_distance);
+//  std::vector<double> target_distances =
+//      nearest_neighbor_distances(source_index, target, missing_distance);
+
 static ProfileMetrics compare_profiles(const std::vector<Point> &target,
                                        const std::vector<Point> &source,
                                        double coverage_threshold,
-                                       double missing_distance) {
+                                       double missing_distance,
+                                       double sample_fraction = 1.0) {
   GridIndex target_index(target, 90.0);
   GridIndex source_index(source, 90.0);
 
+  auto sample = [&](const std::vector<Point> &pts) {
+    if (sample_fraction >= 1.0) {
+      return pts;
+    }
+    std::vector<Point> out;
+    std::size_t step = std::max<std::size_t>(
+        1, static_cast<std::size_t>(1.0 / sample_fraction));
+    out.reserve(pts.size() / step + 1);
+    for (std::size_t i = 0; i < pts.size(); i += step) {
+      out.push_back(pts[i]);
+    }
+    return out;
+  };
+
+  const std::vector<Point> source_sample = sample(source);
+  const std::vector<Point> target_sample = sample(target);
+
   std::vector<double> source_distances =
-      nearest_neighbor_distances(target_index, source, missing_distance);
+      nearest_neighbor_distances(target_index, source_sample, missing_distance);
   std::vector<double> target_distances =
-      nearest_neighbor_distances(source_index, target, missing_distance);
+      nearest_neighbor_distances(source_index, target_sample, missing_distance);
 
   std::vector<double> all_distances = source_distances;
   all_distances.insert(all_distances.end(), target_distances.begin(),
@@ -526,7 +556,8 @@ initial_pca_alignment(const std::vector<Point> &target,
 
 static IcpResult collimate_icp(const std::vector<Point> &target,
                                const std::vector<Point> &source,
-                               bool save_snapshots) {
+                               bool save_snapshots,
+                               double metrics_sample_fraction = 1.0) {
   const double match_threshold = 420.0;
   const double convergence_threshold = VARIATION;
   const double canvas_diag = std::hypot(kCanvasWidth, kCanvasHeight);
@@ -549,9 +580,15 @@ static IcpResult collimate_icp(const std::vector<Point> &target,
 
   //ProfileMetrics initial_metrics =
   //    compare_profiles(target, current, match_threshold, missing_distance);
+ // auto t0_metrics = std::chrono::steady_clock::now();
+ // ProfileMetrics initial_metrics =
+ //     compare_profiles(target, current, match_threshold, missing_distance);
+
   auto t0_metrics = std::chrono::steady_clock::now();
   ProfileMetrics initial_metrics =
-      compare_profiles(target, current, match_threshold, missing_distance);
+      compare_profiles(target, current, match_threshold, missing_distance,
+                       metrics_sample_fraction);
+
   auto t1_metrics = std::chrono::steady_clock::now();
   double ms_metrics =
       std::chrono::duration<double, std::milli>(t1_metrics - t0_metrics).count();
@@ -616,9 +653,14 @@ static IcpResult collimate_icp(const std::vector<Point> &target,
 
     //const ProfileMetrics metrics =
     //    compare_profiles(target, current, match_threshold, missing_distance);
-            auto t0_pm = std::chrono::steady_clock::now();
-            ProfileMetrics metrics =
-                compare_profiles(target, current, match_threshold, missing_distance);
+           // auto t0_pm = std::chrono::steady_clock::now();
+           // ProfileMetrics metrics =
+           //     compare_profiles(target, current, match_threshold, missing_distance);
+          auto t0_pm = std::chrono::steady_clock::now();
+          ProfileMetrics metrics =
+              compare_profiles(target, current, match_threshold, missing_distance,
+                               metrics_sample_fraction);
+
             auto t1_pm = std::chrono::steady_clock::now();
             double ms_pm =
                 std::chrono::duration<double, std::milli>(t1_pm - t0_pm).count();
@@ -934,6 +976,7 @@ int main(int argc, char **argv) {
   bool viewer = false;
   bool export_outputs = false;
   double deformation_amplitude = 60.0;
+  double metrics_sample_fraction = 1.0;
   std::filesystem::path output_dir = "reconstruction";
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -945,17 +988,20 @@ int main(int argc, char **argv) {
       deformation_amplitude = std::stod(argv[++i]);
     } else if (arg == "--no-deformation") {
       deformation_amplitude = 0.0;
+    } else if (arg == "--sample-fraction" && i + 1 < argc) {
+      metrics_sample_fraction = std::stod(argv[++i]);
     } else if (arg == "--output" && i + 1 < argc) {
       output_dir = argv[++i];
       export_outputs = true;
     } else {
       std::cerr << "usage: " << argv[0]
                 << " [--viewer] [--export] [--output directory]"
-                << " [--deformation units] [--no-deformation]\n";
+                << " [--deformation units] [--no-deformation]"
+                << " [--sample-fraction value]\n";
       return EXIT_FAILURE;
     }
   }
-
+  
   try {
     const std::size_t points_per_cloud = POINTS_PER_CLOUD;
     const Transform2D target_to_source =
@@ -997,7 +1043,8 @@ int main(int argc, char **argv) {
     print_transform("Synthetic target->source transform", target_to_source);
     std::cout << "Collimating source cloud onto target cloud...\n";
 
-    IcpResult result = collimate_icp(target, source, viewer || export_outputs);
+    IcpResult result = collimate_icp(target, source, viewer || export_outputs,
+                                     metrics_sample_fraction);
     const Transform2D expected_source_to_target =
         inverse_transform(target_to_source);
 

@@ -206,3 +206,45 @@ Total acumulado (5 corridas): 145,834.07 ms
 ---
 
 ## Ejercicio E
+
+
+### Cambio realizado
+
+Parámetro `sample_fraction` agregado a `compare_profiles()` (default 1.0). Con valor <1.0, muestrea uniformemente (1 de cada N puntos) `target` y `source` antes de las búsquedas de vecino más cercano. Flag `--sample-fraction <valor>` agregado a `main()`.
+
+### Hipótesis
+
+`compare_profiles` construye 2 `GridIndex` adicionales y ejecuta 2 búsquedas completas de vecino más cercano por llamada (46 veces total), trabajo duplicado respecto al loop principal. Reducir la muestra debería reducir el tiempo proporcionalmente sin afectar el resultado final.
+
+### Evidencia: instrumentación manual (Ejercicio D)
+
+| región | avg_ms sin muestreo | avg_ms con `--sample-fraction 0.1` | reducción |
+|---|---|---|---|
+| `profile_metrics` | ~468 | ~62 | 87% |
+| `nearest_neighbors` | ~195 | ~195 | 0% (no tocado) |
+
+### Evidencia: `perf stat`
+
+| métrica | sin muestreo | con `--sample-fraction 0.1` | reducción |
+|---|---|---|---|
+| task-clock (msec) | 31,420.24 | 15,260.02 | 51.4% |
+| elapsed (s) | 31.44 | 15.28 | 51.4% |
+| user (s) | 31.16 | 15.24 | 51.1% |
+| sys (s) | 0.258 | 0.026 | 90.0% |
+| cpu-cycles | 119,922,287,145 | 49,702,712,620 | 58.5% |
+| instructions | 206,609,544,410 | 84,798,289,056 | 59.0% |
+| branch-misses | 494,710,767 | 195,018,672 | 60.6% |
+| page-faults | 97,815 | 5,435 | 94.4% |
+
+### Resultado del algoritmo
+
+| | sin muestreo | con `--sample-fraction 0.1` |
+|---|---|---|
+| profile_score final | 0.01847086 | 0.01841463 |
+| iteraciones | 45 | 45 |
+| theta recuperado | -18.00595° | -18.00595° |
+| tx, ty recuperados | (-1720.41095, 1781.98006) | (-1720.41095, 1781.98006) |
+
+Diferencia relativa en profile_score: 0.30%.
+
+
