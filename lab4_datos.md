@@ -134,9 +134,74 @@ Cumulativos: `collimate_icp` 98.2%, `nearest_neighbor_distances` 65.2%, `compare
 
 ## Ejercicio C (segunda mitad — perf annotate)
 
+
+Evento: `cpu/cycles/P`, 4000 Hz — 119K muestras, event count ≈ 103,009,985,620.
+
+### `perf annotate` — `GridIndex::nearest()`
+
+| instrucción | % samples |
+|---|---|
+| `comisd %xmm0,%xmm1` | 22.80% |
+| `jbe 239` | 13.47% |
+| `addq $0x4,%rdx` | 7.23% |
+| `movsd (%r14),%xmm1` | 3.89% |
+| `addsd %xmm1,%xmm0` | 3.54% |
+| `subsd 0x8(%rax),%xmm1` | 3.48% |
+| `mulsd %xmm1,%xmm1` | 3.47% |
+| `subsd (%rax),%xmm0` | 3.42% |
+| `mulsd %xmm0,%xmm0` | 3.36% |
+| `movslq (%rdx),%rax` | 2.66% |
+| `shlq $0x4,%rax` | 2.61% |
+| `addq %rdi,%rax` | 2.61% |
+| `cmpl -0x34(%rbp),%eax` | 1.73% |
+| `cmpl -0x38(%rbp),%ecx` | 2.04% |
+| `jne 140` | 1.74% |
+
 ---
 
 ## Ejercicio D
+
+### Instrumentación con `std::chrono` — regiones medidas
+
+```cpp
+auto t0 = std::chrono::steady_clock::now();
+/* región medida */
+auto t1 = std::chrono::steady_clock::now();
+double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+std::cout << "region_ms=" << ms << "\n";
+```
+
+Regiones instrumentadas (8): `generate_target_profile`, `source_deformation`, `build_grid_index`, `profile_metrics` (inicial + por iteración), `nearest_neighbors` (por iteración), `estimate_transform` (por iteración), `export_reconstruction`.
+
+### Corrida individual (`--export`)
+
+141 líneas (1 encabezado + 140 filas): 4 regiones de una sola ejecución + 45 iteraciones × 3 regiones (nearest_neighbors, estimate_transform, profile_metrics) + export_reconstruction.
+
+### Promedio de 5 repeticiones
+
+| región | total_ms | avg_ms | n |
+|---|---|---|---|
+| `profile_metrics` | 89693.59 | 389.9721 | 230 |
+| `nearest_neighbors` | 43757.05 | 194.4758 | 225 |
+| `export_reconstruction` | 12104.10 | 2420.8200 | 5 |
+| `source_deformation` | 125.03 | 25.0055 | 5 |
+| `estimate_transform` | 92.75 | 0.4122 | 225 |
+| `generate_target_profile` | 46.17 | 9.2348 | 5 |
+| `build_grid_index` | 15.38 | 3.0769 | 5 |
+
+Total acumulado (5 corridas): 145,834.07 ms
+
+### % del tiempo total por región
+
+| región | % |
+|---|---|
+| `profile_metrics` | 61.50% |
+| `nearest_neighbors` | 30.01% |
+| `export_reconstruction` | 8.30% |
+| `source_deformation` | 0.09% |
+| `estimate_transform` | 0.06% |
+| `generate_target_profile` | 0.03% |
+| `build_grid_index` | 0.01% |
 
 ---
 

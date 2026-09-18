@@ -80,7 +80,17 @@ struct IcpResult {
   double score;
 };
 
+
+struct TimingEntry {
+  std::string region;
+  int iteration;
+  double milliseconds;
+};
+
+static std::vector<TimingEntry> g_timing_log;
+
 static constexpr double kPi = 3.14159265358979323846;
+
 
 static double normalize_angle(double theta) {
   while (theta > kPi) {
@@ -521,7 +531,14 @@ static IcpResult collimate_icp(const std::vector<Point> &target,
   const double convergence_threshold = VARIATION;
   const double canvas_diag = std::hypot(kCanvasWidth, kCanvasHeight);
   const double missing_distance = canvas_diag;
+  //GridIndex index(target, 90.0);
+  auto t0_grid = std::chrono::steady_clock::now();
   GridIndex index(target, 90.0);
+  auto t1_grid = std::chrono::steady_clock::now();
+  double ms_grid =
+      std::chrono::duration<double, std::milli>(t1_grid - t0_grid).count();
+  std::cout << "build_grid_index_ms=" << ms_grid << "\n";
+  g_timing_log.push_back({"build_grid_index", 0, ms_grid});
   // Initial Transformation: = initial_pca_alignment(target, source, index);
   // Disabled
   Transform2D total{};
@@ -530,8 +547,16 @@ static IcpResult collimate_icp(const std::vector<Point> &target,
   std::vector<Transform2D> transforms;
   std::vector<IterationMetrics> metrics_history;
 
+  //ProfileMetrics initial_metrics =
+  //    compare_profiles(target, current, match_threshold, missing_distance);
+  auto t0_metrics = std::chrono::steady_clock::now();
   ProfileMetrics initial_metrics =
       compare_profiles(target, current, match_threshold, missing_distance);
+  auto t1_metrics = std::chrono::steady_clock::now();
+  double ms_metrics =
+      std::chrono::duration<double, std::milli>(t1_metrics - t0_metrics).count();
+  std::cout << "profile_metrics_ms=" << ms_metrics << "\n";
+  g_timing_log.push_back({"profile_metrics", 0, ms_metrics});
   double previous_score = profile_score(initial_metrics);
   double score = previous_score;
   int iterations = 0;
@@ -556,6 +581,7 @@ static IcpResult collimate_icp(const std::vector<Point> &target,
     matches.reserve(current.size());
     double distance_sum = 0.0;
 
+    auto t0_nn = std::chrono::steady_clock::now();
     for (const Point &p : current) {
       Point nearest_point{0.0, 0.0};
       double d2 = 0.0;
@@ -565,19 +591,40 @@ static IcpResult collimate_icp(const std::vector<Point> &target,
         distance_sum += d2;
       }
     }
+    auto t1_nn = std::chrono::steady_clock::now();
+    double ms_nn =
+        std::chrono::duration<double, std::milli>(t1_nn - t0_nn).count();
+    std::cout << "nearest_neighbors_ms=" << ms_nn << " (iter=" << iter << ")\n";
+    g_timing_log.push_back({"nearest_neighbors", iter, ms_nn});
 
     if (matches.size() < current.size() / 2) {
       throw std::runtime_error("Too few nearest-neighbor matches");
     }
 
-    const Transform2D delta = estimate_rigid_transform(matches);
+    auto t0_est = std::chrono::steady_clock::now();
+    Transform2D delta = estimate_rigid_transform(matches);
+    auto t1_est = std::chrono::steady_clock::now();
+    double ms_est =
+        std::chrono::duration<double, std::milli>(t1_est - t0_est).count();
+    std::cout << "estimate_transform_ms=" << ms_est << " (iter=" << iter << ")\n";
+    g_timing_log.push_back({"estimate_transform", iter, ms_est});
+
     total = compose(delta, total);
     current = apply_transform(current, delta);
     const double match_rmse =
         std::sqrt(distance_sum / static_cast<double>(matches.size()));
-    const ProfileMetrics metrics =
-        compare_profiles(target, current, match_threshold, missing_distance);
-    score = profile_score(metrics);
+
+    //const ProfileMetrics metrics =
+    //    compare_profiles(target, current, match_threshold, missing_distance);
+            auto t0_pm = std::chrono::steady_clock::now();
+            ProfileMetrics metrics =
+                compare_profiles(target, current, match_threshold, missing_distance);
+            auto t1_pm = std::chrono::steady_clock::now();
+            double ms_pm =
+                std::chrono::duration<double, std::milli>(t1_pm - t0_pm).count();
+            std::cout << "profile_metrics_ms=" << ms_pm << " (iter=" << iter << ")\n";
+            g_timing_log.push_back({"profile_metrics", iter, ms_pm});
+            score = profile_score(metrics);
 
     const double score_variation =
         std::abs(previous_score - score) / std::max(previous_score, 1.0e-12);
@@ -914,7 +961,16 @@ int main(int argc, char **argv) {
     const Transform2D target_to_source =
         transform_about_canvas_center(18.0 * kPi / 180.0, 620.0, -430.0);
 
+    //std::vector<Point> target = generate_h_rail_cloud(points_per_cloud, 7);
+    auto t0_gen = std::chrono::steady_clock::now();
     std::vector<Point> target = generate_h_rail_cloud(points_per_cloud, 7);
+    auto t1_gen = std::chrono::steady_clock::now();
+    double ms_gen =
+        std::chrono::duration<double, std::milli>(t1_gen - t0_gen).count();
+    std::cout << "generate_target_profile_ms=" << ms_gen << "\n";
+    g_timing_log.push_back({"generate_target_profile", 0, ms_gen});
+
+    auto t0_def = std::chrono::steady_clock::now();
     std::vector<Point> source = apply_transform(target, target_to_source);
     const double deformation_rms =
         add_random_deformation(source, deformation_amplitude, 31);
@@ -925,6 +981,11 @@ int main(int argc, char **argv) {
       p.x = std::clamp(p.x + sensor_noise(rng), 0.0, kCanvasWidth);
       p.y = std::clamp(p.y + sensor_noise(rng), 0.0, kCanvasHeight);
     }
+    auto t1_def = std::chrono::steady_clock::now();
+    double ms_def =
+        std::chrono::duration<double, std::milli>(t1_def - t0_def).count();
+    std::cout << "source_deformation_ms=" << ms_def << "\n";
+    g_timing_log.push_back({"source_deformation", 0, ms_def});
 
     std::cout << "Generated two H-shaped rail point clouds with "
               << points_per_cloud << " points each.\n";
@@ -948,8 +1009,14 @@ int main(int argc, char **argv) {
               << " iterations with profile_score=" << std::fixed
               << std::setprecision(8) << result.score << "\n";
 
-    if (export_outputs) {
+      if (export_outputs) {
+      auto t0_exp = std::chrono::steady_clock::now();
       export_reconstruction(output_dir, target, source, result);
+      auto t1_exp = std::chrono::steady_clock::now();
+      double ms_exp =
+          std::chrono::duration<double, std::milli>(t1_exp - t0_exp).count();
+      std::cout << "export_reconstruction_ms=" << ms_exp << "\n";
+      g_timing_log.push_back({"export_reconstruction", 0, ms_exp});
     }
 
     if (viewer) {
@@ -962,5 +1029,15 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
+  {
+    std::ofstream out("reconstruction/timing_log.csv");
+    out << "region,iteration,milliseconds\n";
+    for (const auto &entry : g_timing_log) {
+      out << entry.region << "," << entry.iteration << ","
+          << entry.milliseconds << "\n";
+    }
+  }
+
   return EXIT_SUCCESS;
+
 }
